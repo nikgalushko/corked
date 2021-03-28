@@ -37,7 +37,7 @@ c, teardown, err := New(ContainerRequest{
 	InitScripts: InitScripts{
 		Inline: `
 			begin;
-	/* Your sql is here. */
+			/* Your sql is here. */
 			commit;
 		`,
 	},
