@@ -32,8 +32,9 @@ const (
 )
 
 type Container struct {
-	t *testing.T
-	c testcontainers.Container
+	t   *testing.T
+	env map[string]string
+	c   testcontainers.Container
 }
 
 type InitScripts struct {
@@ -81,7 +82,7 @@ func NewCtx(ctx context.Context, creq ContainerRequest) (Container, func(), erro
 		return Container{}, nil, err
 	}
 
-	return Container{c: postgresC}, func() {
+	return Container{c: postgresC, env: creq.Env}, func() {
 		os.Remove(tempfile)
 		postgresC.Terminate(ctx)
 	}, nil
@@ -102,7 +103,7 @@ func (c Container) DSNCtx(ctx context.Context) string {
 		c.t.Fatal(err)
 	}
 
-	return fmt.Sprintf(dsnTemplate, dbUser, dbPass, host, port.Int(), dbName)
+	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], host, port.Int(), c.env[envDB])
 }
 
 func migrations(i InitScripts) (map[string]string, string, error) {

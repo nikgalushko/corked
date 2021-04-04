@@ -3,6 +3,7 @@ package postgres
 import (
 	"database/sql"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	_ "github.com/lib/pq"
@@ -91,6 +92,24 @@ func TestNew_Migrations_FilesIsNotAbs(t *testing.T) {
 	assert.Nil(t, teardown)
 	assert.Error(t, err)
 	assert.Empty(t, c)
+}
+
+func TestNew_SpecialEnv(t *testing.T) {
+	req := ContainerRequest{
+		InitScripts: InitScripts{
+			Inline: "",
+		},
+	}
+	req.Env = map[string]string{
+		"POSTGRES_PASSWORD": "super_secret_pass",
+		"POSTGRES_DB":       "mydb",
+	}
+	c, teardown, err := New(req)
+	assert.NoError(t, err)
+
+	defer teardown()
+
+	assert.Regexp(t, regexp.MustCompile(`postgres\:\/\/postgres\:super_secret_pass@localhost:(\d{1,5})\/mydb\?sslmode=disable`), c.DSN())
 }
 
 func selectTables(t *testing.T, dsn string) map[string]struct{} {
