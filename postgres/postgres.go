@@ -7,8 +7,10 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -33,12 +35,14 @@ const (
 )
 
 type Container struct {
-	env            map[string]string
+	env      map[string]string
+	c        testcontainers.Container
+	host     string
+	port     int
+	mainConn *sql.DB
+
 	temporaryFiles []string
-	c              testcontainers.Container
-	host           string
-	port           int
-	mainConn       *sql.DB
+	lock           sync.Mutex
 }
 
 type InitScripts struct {
@@ -90,31 +94,27 @@ func NewCtx(ctx context.Context, creq ContainerRequest) (*Container, func(), err
 		c:              postgresC,
 		env:            creq.Env,
 		temporaryFiles: []string{tempfile},
+		lock:           sync.Mutex{},
 	}
 	teardown := func() {
 		for _, f := range container.temporaryFiles {
 			os.Remove(f)
 		}
 
-		postgresC.Terminate(ctx)
+		_ = postgresC.Terminate(ctx)
 	}
 
 	container.host, err = postgresC.Host(ctx)
-	if err != nil {
-		teardown()
+	if err == nil {
+		var port nat.Port
 
-		return nil, nil, err
+		port, err = postgresC.MappedPort(ctx, natPort)
+		if err == nil {
+			container.port = port.Int()
+			container.mainConn, err = sql.Open("postgres", container.DSN())
+		}
 	}
 
-	port, err := postgresC.MappedPort(ctx, natPort)
-	if err != nil {
-		teardown()
-
-		return nil, nil, err
-	}
-	container.port = port.Int()
-
-	container.mainConn, err = sql.Open("postgres", container.DSN())
 	if err != nil {
 		teardown()
 
@@ -137,15 +137,16 @@ func (c *Container) CreateDatabse(opts Options) (string, error) {
 		return "", err
 	}
 
-	// TODO: mutex
+	c.lock.Lock()
 	c.temporaryFiles = append(c.temporaryFiles, tempfile)
+	c.lock.Unlock()
 
 	_, err = c.mainConn.Exec("create database " + name)
 	if err != nil {
 		return "", err
 	}
 
-	dsn := c.dsn(context.Background(), name)
+	dsn := c.dsn(name)
 	conn, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return "", err
@@ -168,15 +169,11 @@ func (c *Container) CreateDatabse(opts Options) (string, error) {
 	return dsn, nil
 }
 
-func (c Container) DSN() string {
-	return c.DSNCtx(context.Background())
+func (c *Container) DSN() string {
+	return c.dsn(c.env[envDB])
 }
 
-func (c Container) DSNCtx(ctx context.Context) string {
-	return c.dsn(ctx, c.env[envDB])
-}
-
-func (c Container) dsn(ctx context.Context, database string) string {
+func (c *Container) dsn(database string) string {
 	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], c.host, c.port, database)
 }
 

@@ -90,6 +90,7 @@ func TestNew_Migrations_Files(t *testing.T) {
 			FromFiles: []string{file},
 		},
 	})
+	assert.NoError(t, err)
 
 	assert.Equal(t, map[string]struct{}{
 		"names":  {},
@@ -130,6 +131,8 @@ func TestNew_SpecialEnv(t *testing.T) {
 func selectTables(t *testing.T, dsn string) map[string]struct{} {
 	db, err := sql.Open("postgres", dsn)
 	assert.NoError(t, err)
+
+	defer db.Close()
 
 	tables := make(map[string]struct{})
 	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
