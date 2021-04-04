@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -32,7 +31,6 @@ const (
 )
 
 type Container struct {
-	t   *testing.T
 	env map[string]string
 	c   testcontainers.Container
 }
@@ -88,22 +86,22 @@ func NewCtx(ctx context.Context, creq ContainerRequest) (Container, func(), erro
 	}, nil
 }
 
-func (c Container) DSN() string {
+func (c Container) DSN() (string, error) {
 	return c.DSNCtx(context.Background())
 }
 
-func (c Container) DSNCtx(ctx context.Context) string {
+func (c Container) DSNCtx(ctx context.Context) (string, error) {
 	host, err := c.c.Host(ctx)
 	if err != nil {
-		c.t.Fatal(err)
+		return "", err
 	}
 
 	port, err := c.c.MappedPort(ctx, natPort)
 	if err != nil {
-		c.t.Fatal(err)
+		return "", err
 	}
 
-	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], host, port.Int(), c.env[envDB])
+	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], host, port.Int(), c.env[envDB]), nil
 }
 
 func migrations(i InitScripts) (map[string]string, string, error) {

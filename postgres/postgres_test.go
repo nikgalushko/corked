@@ -16,7 +16,10 @@ func TestNew_Simple(t *testing.T) {
 
 	defer teardown()
 
-	db, err := sql.Open("postgres", c.DSN())
+	dsn, err := c.DSN()
+	assert.NoError(t, err)
+
+	db, err := sql.Open("postgres", dsn)
 	assert.NoError(t, err)
 
 	var (
@@ -58,10 +61,13 @@ func TestNew_Migrations_Inline(t *testing.T) {
 
 	defer teardown()
 
+	dsn, err := c.DSN()
+	assert.NoError(t, err)
+
 	assert.Equal(t, map[string]struct{}{
 		"names":  {},
 		"cities": {},
-	}, selectTables(t, c.DSN()))
+	}, selectTables(t, dsn))
 }
 
 func TestNew_Migrations_Files(t *testing.T) {
@@ -77,10 +83,13 @@ func TestNew_Migrations_Files(t *testing.T) {
 
 	defer teardown()
 
+	dsn, err := c.DSN()
+	assert.NoError(t, err)
+
 	assert.Equal(t, map[string]struct{}{
 		"names":  {},
 		"cities": {},
-	}, selectTables(t, c.DSN()))
+	}, selectTables(t, dsn))
 }
 
 func TestNew_Migrations_FilesIsNotAbs(t *testing.T) {
@@ -109,7 +118,10 @@ func TestNew_SpecialEnv(t *testing.T) {
 
 	defer teardown()
 
-	assert.Regexp(t, regexp.MustCompile(`postgres\:\/\/postgres\:super_secret_pass@localhost:(\d{1,5})\/mydb\?sslmode=disable`), c.DSN())
+	dsn, err := c.DSN()
+	assert.NoError(t, err)
+
+	assert.Regexp(t, regexp.MustCompile(`postgres\:\/\/postgres\:super_secret_pass@localhost:(\d{1,5})\/mydb\?sslmode=disable`), dsn)
 }
 
 func selectTables(t *testing.T, dsn string) map[string]struct{} {
