@@ -107,7 +107,7 @@ func (c Container) DSNCtx(ctx context.Context) string {
 
 func migrations(i InitScripts) (map[string]string, string, error) {
 	var (
-		ret      map[string]string
+		ret      = make(map[string]string)
 		tempfile string
 	)
 

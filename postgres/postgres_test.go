@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	_ "github.com/lib/pq"
@@ -10,16 +11,12 @@ import (
 
 func TestNew_Simple(t *testing.T) {
 	c, teardown, err := New(ContainerRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	defer teardown()
 
 	db, err := sql.Open("postgres", c.DSN())
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	var (
 		actualVersion   string
@@ -28,16 +25,12 @@ func TestNew_Simple(t *testing.T) {
 
 	row := db.QueryRow("select version()")
 	err = row.Scan(&actualVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
-	if actualVersion != expectedVersion {
-		t.Fatalf("selected version is not equal to expected; expected: %s\n; acutual: %s\n", expectedVersion, actualVersion)
-	}
+	assert.Equal(t, expectedVersion, actualVersion)
 }
 
-func TestNew_Migrations(t *testing.T) {
+func TestNew_Migrations_Inline(t *testing.T) {
 	c, teardown, err := New(ContainerRequest{
 		InitScripts: InitScripts{
 			Inline: `
@@ -60,22 +53,53 @@ func TestNew_Migrations(t *testing.T) {
 			`,
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	defer teardown()
 
-	db, err := sql.Open("postgres", c.DSN())
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.Equal(t, map[string]struct{}{
+		"names":  {},
+		"cities": {},
+	}, selectTables(t, c.DSN()))
+}
+
+func TestNew_Migrations_Files(t *testing.T) {
+	file, err := filepath.Abs("./testdata/migrations/init.up.sql")
+	assert.NoError(t, err)
+
+	c, teardown, err := New(ContainerRequest{
+		InitScripts: InitScripts{
+			FromFiles: []string{file},
+		},
+	})
+	assert.NoError(t, err)
+
+	defer teardown()
+
+	assert.Equal(t, map[string]struct{}{
+		"names":  {},
+		"cities": {},
+	}, selectTables(t, c.DSN()))
+}
+
+func TestNew_Migrations_FilesIsNotAbs(t *testing.T) {
+	c, teardown, err := New(ContainerRequest{
+		InitScripts: InitScripts{
+			FromFiles: []string{"./testdata/migrations/init.up.sql"},
+		},
+	})
+	assert.Nil(t, teardown)
+	assert.Error(t, err)
+	assert.Empty(t, c)
+}
+
+func selectTables(t *testing.T, dsn string) map[string]struct{} {
+	db, err := sql.Open("postgres", dsn)
+	assert.NoError(t, err)
 
 	tables := make(map[string]struct{})
 	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	defer rows.Close()
 
@@ -83,15 +107,10 @@ func TestNew_Migrations(t *testing.T) {
 		var tableName string
 
 		err := rows.Scan(&tableName)
-		if err != nil {
-			t.Fatal(err)
-		}
+		assert.NoError(t, err)
 
 		tables[tableName] = struct{}{}
 	}
 
-	assert.Equal(t, map[string]struct{}{
-		"names":  {},
-		"cities": {},
-	}, tables)
+	return tables
 }
