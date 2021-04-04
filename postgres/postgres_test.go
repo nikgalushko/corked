@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"database/sql"
+	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -10,13 +12,25 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNew_Simple(t *testing.T) {
+var newDatabse func(Options) (dsn string, err error)
+
+func TestMain(m *testing.M) {
 	c, teardown, err := New(ContainerRequest{})
-	assert.NoError(t, err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	defer teardown()
 
-	dsn, err := c.DSN()
+	newDatabse = c.CreateDatabse
+
+	code := m.Run()
+
+	os.Exit(code)
+}
+
+func TestNew_Simple(t *testing.T) {
+	dsn, err := newDatabse(Options{PrefixName: "simple"})
 	assert.NoError(t, err)
 
 	db, err := sql.Open("postgres", dsn)
@@ -35,7 +49,8 @@ func TestNew_Simple(t *testing.T) {
 }
 
 func TestNew_Migrations_Inline(t *testing.T) {
-	c, teardown, err := New(ContainerRequest{
+	dsn, err := newDatabse(Options{
+		PrefixName: "migrations_inline",
 		InitScripts: InitScripts{
 			Inline: `
 				begin;
@@ -59,11 +74,6 @@ func TestNew_Migrations_Inline(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	defer teardown()
-
-	dsn, err := c.DSN()
-	assert.NoError(t, err)
-
 	assert.Equal(t, map[string]struct{}{
 		"names":  {},
 		"cities": {},
@@ -74,17 +84,12 @@ func TestNew_Migrations_Files(t *testing.T) {
 	file, err := filepath.Abs("./testdata/migrations/init.up.sql")
 	assert.NoError(t, err)
 
-	c, teardown, err := New(ContainerRequest{
+	dsn, err := newDatabse(Options{
+		PrefixName: "migrations_files",
 		InitScripts: InitScripts{
 			FromFiles: []string{file},
 		},
 	})
-	assert.NoError(t, err)
-
-	defer teardown()
-
-	dsn, err := c.DSN()
-	assert.NoError(t, err)
 
 	assert.Equal(t, map[string]struct{}{
 		"names":  {},
@@ -93,14 +98,15 @@ func TestNew_Migrations_Files(t *testing.T) {
 }
 
 func TestNew_Migrations_FilesIsNotAbs(t *testing.T) {
-	c, teardown, err := New(ContainerRequest{
+	dsn, err := newDatabse(Options{
+		PrefixName: "migrations_files",
 		InitScripts: InitScripts{
 			FromFiles: []string{"./testdata/migrations/init.up.sql"},
 		},
 	})
-	assert.Nil(t, teardown)
+
 	assert.Error(t, err)
-	assert.Empty(t, c)
+	assert.Empty(t, dsn)
 }
 
 func TestNew_SpecialEnv(t *testing.T) {
@@ -118,10 +124,7 @@ func TestNew_SpecialEnv(t *testing.T) {
 
 	defer teardown()
 
-	dsn, err := c.DSN()
-	assert.NoError(t, err)
-
-	assert.Regexp(t, regexp.MustCompile(`postgres\:\/\/postgres\:super_secret_pass@localhost:(\d{1,5})\/mydb\?sslmode=disable`), dsn)
+	assert.Regexp(t, regexp.MustCompile(`postgres\:\/\/postgres\:super_secret_pass@localhost:(\d{1,5})\/mydb\?sslmode=disable`), c.DSN())
 }
 
 func selectTables(t *testing.T, dsn string) map[string]struct{} {

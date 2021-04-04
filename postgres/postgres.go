@@ -2,10 +2,12 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -31,8 +33,12 @@ const (
 )
 
 type Container struct {
-	env map[string]string
-	c   testcontainers.Container
+	env            map[string]string
+	temporaryFiles []string
+	c              testcontainers.Container
+	host           string
+	port           int
+	mainConn       *sql.DB
 }
 
 type InitScripts struct {
@@ -51,14 +57,14 @@ var defaultEnv = map[string]string{
 	envPass: dbPass,
 }
 
-func New(creq ContainerRequest) (Container, func(), error) {
+func New(creq ContainerRequest) (*Container, func(), error) {
 	return NewCtx(context.Background(), creq)
 }
 
-func NewCtx(ctx context.Context, creq ContainerRequest) (Container, func(), error) {
+func NewCtx(ctx context.Context, creq ContainerRequest) (*Container, func(), error) {
 	initScripts, tempfile, err := migrations(creq.InitScripts)
 	if err != nil {
-		return Container{}, nil, err
+		return nil, nil, err
 	}
 
 	if creq.Image == "" {
@@ -77,31 +83,101 @@ func NewCtx(ctx context.Context, creq ContainerRequest) (Container, func(), erro
 		},
 	)
 	if err != nil {
-		return Container{}, nil, err
+		return nil, nil, err
 	}
 
-	return Container{c: postgresC, env: creq.Env}, func() {
-		os.Remove(tempfile)
+	container := &Container{
+		c:              postgresC,
+		env:            creq.Env,
+		temporaryFiles: []string{tempfile},
+	}
+	teardown := func() {
+		for _, f := range container.temporaryFiles {
+			os.Remove(f)
+		}
+
 		postgresC.Terminate(ctx)
-	}, nil
+	}
+
+	container.host, err = postgresC.Host(ctx)
+	if err != nil {
+		teardown()
+
+		return nil, nil, err
+	}
+
+	port, err := postgresC.MappedPort(ctx, natPort)
+	if err != nil {
+		teardown()
+
+		return nil, nil, err
+	}
+	container.port = port.Int()
+
+	container.mainConn, err = sql.Open("postgres", container.DSN())
+	if err != nil {
+		teardown()
+
+		return nil, nil, err
+	}
+
+	return container, teardown, nil
 }
 
-func (c Container) DSN() (string, error) {
+type Options struct {
+	PrefixName  string
+	InitScripts InitScripts
+}
+
+func (c *Container) CreateDatabse(opts Options) (string, error) {
+	name := fmt.Sprintf("%s_%d", opts.PrefixName, time.Now().UnixNano())
+
+	initScripts, tempfile, err := migrations(opts.InitScripts)
+	if err != nil {
+		return "", err
+	}
+
+	// TODO: mutex
+	c.temporaryFiles = append(c.temporaryFiles, tempfile)
+
+	_, err = c.mainConn.Exec("create database " + name)
+	if err != nil {
+		return "", err
+	}
+
+	dsn := c.dsn(context.Background(), name)
+	conn, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return "", err
+	}
+
+	defer conn.Close()
+
+	for file := range initScripts {
+		data, err := ioutil.ReadFile(file)
+		if err != nil {
+			return "", err
+		}
+
+		_, err = conn.Exec(string(data))
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return dsn, nil
+}
+
+func (c Container) DSN() string {
 	return c.DSNCtx(context.Background())
 }
 
-func (c Container) DSNCtx(ctx context.Context) (string, error) {
-	host, err := c.c.Host(ctx)
-	if err != nil {
-		return "", err
-	}
+func (c Container) DSNCtx(ctx context.Context) string {
+	return c.dsn(ctx, c.env[envDB])
+}
 
-	port, err := c.c.MappedPort(ctx, natPort)
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], host, port.Int(), c.env[envDB]), nil
+func (c Container) dsn(ctx context.Context, database string) string {
+	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], c.host, c.port, database)
 }
 
 func migrations(i InitScripts) (map[string]string, string, error) {
