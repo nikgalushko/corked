@@ -7,4 +7,5 @@ require (
 	github.com/lib/pq v1.10.0
 	github.com/stretchr/testify v1.7.0
 	github.com/testcontainers/testcontainers-go v0.11.0
+	go.etcd.io/etcd/client/v3 v3.5.0
 )
