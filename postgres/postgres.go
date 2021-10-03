@@ -67,18 +67,12 @@ func New(creq ContainerRequest) (*Container, func(), error) {
 }
 
 func NewCtx(ctx context.Context, creq ContainerRequest) (*Container, func(), error) {
-	initScripts, tempfile, err := migrations(creq.InitScripts)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	if creq.Image == "" {
 		creq.Image = image
 	}
 
 	creq.ExposedPorts = []string{port}
 	creq.Env = merge(defaultEnv, creq.Env)
-	creq.BindMounts = merge(initScripts, creq.BindMounts)
 	creq.WaitingFor = wait.NewHostPortStrategy(natPort)
 
 	postgresC, err := testcontainers.GenericContainer(ctx,
@@ -92,10 +86,9 @@ func NewCtx(ctx context.Context, creq ContainerRequest) (*Container, func(), err
 	}
 
 	container := &Container{
-		c:              postgresC,
-		env:            creq.Env,
-		temporaryFiles: []string{tempfile},
-		lock:           sync.Mutex{},
+		c:    postgresC,
+		env:  creq.Env,
+		lock: sync.Mutex{},
 	}
 	teardown := func() {
 		for _, f := range container.temporaryFiles {
@@ -155,8 +148,8 @@ func (c *Container) CreateDatabse(opts Options) (string, error) {
 
 	defer conn.Close()
 
-	for file := range initScripts {
-		data, err := ioutil.ReadFile(file)
+	for _, migration := range initScripts {
+		data, err := ioutil.ReadFile(migration.file)
 		if err != nil {
 			return "", err
 		}
@@ -178,10 +171,16 @@ func (c *Container) dsn(database string) string {
 	return fmt.Sprintf(dsnTemplate, dbUser, c.env[envPass], c.host, c.port, database)
 }
 
-func migrations(i InitScripts) (map[string]string, string, error) {
+type migration struct {
+	file          string
+	containerPath string
+}
+
+func migrations(i InitScripts) ([]migration, string, error) {
+	const docker = "/docker-entrypoint-initdb.d/"
 	var (
-		ret      = make(map[string]string)
 		tempfile string
+		ret      []migration
 	)
 
 	if i.Inline != "" {
@@ -190,9 +189,10 @@ func migrations(i InitScripts) (map[string]string, string, error) {
 			return nil, "", err
 		}
 
-		ret = map[string]string{
-			filename: "/docker-entrypoint-initdb.d/init.sql",
-		}
+		ret = append(ret, migration{
+			file:          filename,
+			containerPath: docker + "init.sql",
+		})
 		tempfile = filename
 	} else if len(i.FromFiles) != 0 {
 		for _, f := range i.FromFiles {
@@ -200,14 +200,14 @@ func migrations(i InitScripts) (map[string]string, string, error) {
 				return nil, "", fmt.Errorf("filepath should be absoulte but %s", f)
 			}
 
-			ret[f] = "/docker-entrypoint-initdb.d/" + filepath.Base(f)
+			ret = append(ret, migration{file: f, containerPath: docker + filepath.Base(f)})
 		}
 	} else if i.FromDir != "" {
 		if !filepath.IsAbs(i.FromDir) {
 			return nil, "", fmt.Errorf("filepath should be absoulte but %s", i.FromDir)
 		}
 
-		ret[i.FromDir] = "/docker-entrypoint-initdb.d"
+		ret = append(ret, migration{file: i.FromDir, containerPath: docker})
 	}
 
 	return ret, tempfile, nil
