@@ -149,7 +149,7 @@ func (c *Container) CreateDatabse(opts Options) (string, error) {
 	defer conn.Close()
 
 	for _, migration := range initScripts {
-		data, err := ioutil.ReadFile(migration.file)
+		data, err := ioutil.ReadFile(migration.fileName)
 		if err != nil {
 			return "", err
 		}
@@ -172,7 +172,7 @@ func (c *Container) dsn(database string) string {
 }
 
 type migration struct {
-	file          string
+	fileName      string
 	containerPath string
 }
 
@@ -190,7 +190,7 @@ func migrations(i InitScripts) ([]migration, string, error) {
 		}
 
 		ret = append(ret, migration{
-			file:          filename,
+			fileName:      filename,
 			containerPath: docker + "init.sql",
 		})
 		tempfile = filename
@@ -200,14 +200,14 @@ func migrations(i InitScripts) ([]migration, string, error) {
 				return nil, "", fmt.Errorf("filepath should be absoulte but %s", f)
 			}
 
-			ret = append(ret, migration{file: f, containerPath: docker + filepath.Base(f)})
+			ret = append(ret, migration{fileName: f, containerPath: docker + filepath.Base(f)})
 		}
 	} else if i.FromDir != "" {
 		if !filepath.IsAbs(i.FromDir) {
 			return nil, "", fmt.Errorf("filepath should be absoulte but %s", i.FromDir)
 		}
 
-		ret = append(ret, migration{file: i.FromDir, containerPath: docker})
+		ret = append(ret, migration{fileName: i.FromDir, containerPath: docker})
 	}
 
 	return ret, tempfile, nil
